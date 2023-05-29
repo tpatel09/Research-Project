@@ -1,0 +1,294 @@
+---
+title: "Predicting Boston Housing Prices?"
+author: "Nathan Lee and Tejas Patel"
+date: "2023-05-24"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret) # functions or fitting the model, cross validation, etc.
+library(ROCR)  # for generating an ROC plot.
+library(knitr) # for rendering tables.
+library(rpart)
+library(tree)
+library(randomForest)
+library(gbm) 
+```
+## Project Overview
+
+The main purpose of this report is to investigate whether it is possible to predict the median value of owner-occupied homes in Boston based on given features. The guiding question for this analysis is: What are the effects of variables such as crime rate, proportion of residential land zoned, average number of rooms, accessibility to highways, etc. on the median value of owner-occupied homes in Boston?
+
+The analysis will be conducted using a dataset from Kaggle that contains information on various features of houses in Boston. The dataset includes variables such as per capita crime rate by town, proportion of residential land zoned for lots over 25,000 sq.ft., average number of rooms per dwelling, index of accessibility to radial highways, and more. The hypothesis is that a higher crime rate (CRIM), a higher nitric oxide concentration (NOX), and more rooms (RM) will affect MEDV the most.
+
+The purpose of this analysis is to develop a regression model that accurately predicts the median value of owner-occupied homes in Boston based on these features. The report will include exploratory data analysis, data preparation, model development and evaluation, prediction and conclusion.
+
+## Explaining the Data
+
+The data for this analysis was obtained from Kaggle. The dataset contains information on various features of houses in Boston. The variables used in this analysis are as follows:
+
+1) CRIM: This variable measures the per capita crime rate by town.
+
+  (i) Data Type: numeric
+  (ii) Range: 0.00632 - 88.9762
+
+2) ZN: This variable measures the proportion of residential land zoned for lots over 25,000 square feet.
+
+  (i) Data Type: numeric
+  (ii) Range: 0 - 100
+
+3) INDUS: This variable measures the proportion of non-retail business acres per town.
+  (i) Data Type: numeric
+  (ii) Range: 0.46 - 27.74
+
+4) CHAS: This variable is a Charles River dummy variable (1 if tract bounds river, 0 otherwise).
+  (i) Data Type: categorical
+  (ii) Levels: 0, 1
+
+5) NOX: This variable measures the nitric oxide concentration (parts per 10 million).
+  (i) Data Type: numeric
+  (ii) Range: 0.385 - 0.871
+
+6) RM: This variable measures the average number of rooms per dwelling.
+  (i) Data Type: numeric
+  (ii) Range: 3.561 - 8.780
+
+7) AGE: This variable measures the proportion of owner-occupied units built prior to 1940.
+  (i) Data Type: numeric
+  (ii) Range: 2.9 - 100.0
+
+8) DIS: This variable measures the weighted distances to five Boston employment centres.
+  (i) Data Type: numeric
+  (ii) Range: 1.1296 - 12.1265
+
+9) RAD: This variable measures the index of accessibility to radial highways.
+  (i) Data Type: numeric
+  (ii) Range: 1 - 24
+
+10) TAX: This variable measures the full-value property-tax per $10,000.
+  (i) Data Type: numeric
+  (ii) Range: 187 - 711
+
+11) PTRATIO: This variable measures the pupil-teacher ratio by town.
+  (i) Data Type: numeric
+  (ii) Range: 12.6 - 22.0
+
+12) B: This variable is the result of the equation B=1000(Bk - 0.63)^2 where Bk is the proportion of black people by town.
+  (i) Data Type: numeric
+  (ii) Range: 0.32 - 396.90
+
+13) LSTAT: This variable measures the % lower status of the population.
+  (i) Data Type: numeric
+  (ii) Range: 1.73 - 37.97
+
+
+Output variable:
+1) MEDV (predicted variable): This variable measures the median value of owner-occupied homes in $1000’s.
+  (i) Data Type: numeric
+  (ii) Range: 5 - 50
+
+## Analysis
+
+#### Multiple Linear Resgression
+
+Our first thought was to use linear regression to assess and quantify the relationship between the dependent variable, MEDV, and independent variables.
+
+Reading in and fitting first Linear regression model using MEDV(Median value of owner-occupied homes in $1000's) as the predicted variable. 
+
+```{r, echo = FALSE}
+boston.data <- read.csv("boston.csv")
+boston.data$CHAS <- factor(boston.data$CHAS)
+
+fit.bos <- lm(formula=MEDV ~ ., data=boston.data)
+summary(fit.bos)
+```
+
+CRIM, NOX, DIS, TAX, PTRATIO, and LSTAT are the variables that have a negative effect on MEDV, while ZN, INDUS, CHAS, RM, AGE, RAD and B have a positive effect. This makes sense since things like higher crime rate tends to bring property value down while having more rooms in a property tends to bring property value up.
+
+
+Fitting a Linear Regression model using only those with significant p-values so that we can focus on the variables with the most impact. 
+
+```{r, echo = FALSE}
+fit.bos2 <- lm(formula=MEDV ~ CRIM + ZN + CHAS + NOX + RM + DIS + RAD + TAX + PTRATIO + B + LSTAT, data=boston.data)
+summary(fit.bos2)
+```
+
+#### Normality
+Do a Shapiro test to check normality of residuals. 
+
+```{r, echo=FALSE}
+shapiro.test(as.numeric(fit.bos2$residual))
+```
+
+Since p-value is < .05 (p-value: < 2.2e-16, therefore < .05), the null hypothesis that the data is normally distributed is rejected, and we show that the data is not normally distributed. 
+
+
+#### Residuals
+
+Display a plot of the residuals from the fit.bos2 model that includes a histogram with a density curve and a QQ Plot in the same plot window.
+
+```{r, echo = FALSE}
+par(mfrow=c(1,2))
+hist(fit.bos2$residuals, prob = TRUE)
+lines(density(fit.bos2$residuals))
+
+qqnorm(y=fit.bos2$residuals)
+qqline(y=fit.bos2$residuals, datax = FALSE)
+```
+
+These plots further show that the residuals are not normally distributed, since the histogram is a symmetric bell shaped curve centered at 0, and the Q-Q plot deviates from the straight line.
+
+
+#### Predicting with Linear Regression Models
+
+```{r, echo=FALSE}
+data.size = nrow(boston.data)
+train.cutoff = round(0.8*data.size, digits=0)
+
+train.data<- boston.data[1:405,]
+test.data<- boston.data[406:506,]
+```
+
+
+We separated the independent variables into categories. The town category was any variable that was by town, the location variable was the distance from the employment centers and weighted distance from highways, and the prop variable is short for property, which were things that had to do directly with the property, so the room number and property tax. 
+
+```{r, echo=FALSE}
+fit.town.pred <- lm(MEDV ~ CRIM + INDUS + PTRATIO + B, data=train.data)
+fit.location.pred <- lm(MEDV ~ DIS + RAD, data=train.data)
+fit.prop.pred <- lm(MEDV ~ RM + TAX, data=train.data)
+
+
+pred.town<-predict (fit.town.pred, test.data, interval="prediction", level=0.95)
+pred.location<-predict (fit.location.pred, test.data, interval="prediction", level=0.95)
+pred.prop<-predict (fit.prop.pred, test.data, interval="prediction", level=0.95)
+```
+
+Then calculate and print the RMSE for the models. Note: use the parameter na.rm = TRUE in the call to mean if you have NA values. This tells the mean function to ignore NAs. Otherwise you will not get a real number.
+
+```{r, echo=FALSE}
+actual.values<-test.data$MEDV
+pred.town.val<-pred.town[,1]
+pred.location.val<-pred.location[,1]
+pred.prop.val<-pred.prop[,1]
+
+rmse.town <- sqrt(mean((actual.values - pred.town.val)^2, na.rm = TRUE)) 
+rmse.town <- round(rmse.town, digits = 5)
+
+rmse.location <- sqrt(mean((actual.values - pred.location.val)^2, na.rm = TRUE))
+rmse.location <- round(rmse.location, digits = 5)
+
+rmse.prop <- sqrt(mean((actual.values - pred.prop.val)^2, na.rm = TRUE))
+rmse.prop <- round(rmse.prop, digits = 5)
+
+print(paste(rmse.town, " is the predicted town value RMSE."))
+print(paste(rmse.location, " is the predicted location value RMSE."))
+print(paste(rmse.prop, " is the predicted property RMSE."))
+```
+
+From the RMSE outputs, we found that the town that the property was in was the best predictor since it had the lowest RMSE value. 
+
+We also wanted to see the impact of the variables that we initially thought would have the most impact on MEDV when we first started looking at the data, which were the CRIM(crime rate), NOX(nitric oxide concentration), and RM(room number) variables. 
+
+```{r, echo=FALSE}
+fit.CRIM.pred <- lm(MEDV ~ CRIM, data=train.data)
+fit.NOX.pred <- lm(MEDV ~ NOX, data=train.data)
+fit.RM.pred <- lm(MEDV ~ RM, data=train.data)
+
+pred.CRIM<-predict (fit.CRIM.pred, test.data, interval="prediction", level=0.95)
+pred.NOX<-predict (fit.NOX.pred, test.data, interval="prediction", level=0.95)
+pred.RM<-predict (fit.RM.pred, test.data, interval="prediction", level=0.95)
+
+pred.CRIM.val<-pred.CRIM[,1]
+pred.NOX.val<-pred.NOX[,1]
+pred.RM.val<-pred.RM[,1]
+
+rmse.CRIM <- sqrt(mean((actual.values - pred.CRIM.val)^2, na.rm = TRUE))
+rmse.CRIM <- round(rmse.CRIM, digits = 5)
+
+rmse.NOX <- sqrt(mean((actual.values - pred.NOX.val)^2, na.rm = TRUE))
+rmse.NOX <- round(rmse.NOX, digits = 5)
+
+rmse.RM <- sqrt(mean((actual.values - pred.RM.val)^2, na.rm = TRUE))
+rmse.RM <- round(rmse.RM, digits = 5)
+
+print(paste(rmse.CRIM, " is the predicted CRIM value RMSE."))
+print(paste(rmse.NOX, " is the predicted NOX value RMSE."))
+print(paste(rmse.RM, " is the predicted RM RMSE."))
+```
+
+
+From the output values, we see that the NOX variable had the lowest RMSE value, which means that this variable was the best predictor(between the specific 3 variables here) of MEDV. 
+
+
+#### Using a Decision Tree Model
+We also thought to use a decision tree model to see if we can predict the median cost of housing in Boston. This idea was taken from a lab that we did, but we do not go as in-depth, as we just wanted to compare the results from the decision tree and the linear regressions that we did. 
+
+These statements create testing and training sets using half for train and half for test. Also creates the vector of true outcomes, or labels for use in model prediction later.
+
+```{r, echo = FALSE}
+seed.val<-12345
+set.seed(seed.val)
+data.size<-nrow(boston.data)
+train.rows<-sample(1:data.size, data.size/2)
+train.data<-boston.data[train.rows,]
+test.data<-boston.data[-train.rows,]
+true.vals<-test.data[,13]
+rf.boston<-randomForest(MEDV~., data=train.data, mtry=6, importance=TRUE)
+rf.pred<-predict(rf.boston, newdata=test.data)
+importance(rf.boston)
+varImpPlot(rf.boston)
+```
+
+This chuck creates a regression tree analysis of the data predicting median house prices, medv, using all other predictors.
+
+```{r, echo = FALSE}
+tree.boston<-tree(MEDV~., data=train.data)
+summary(tree.boston)
+plot(tree.boston)
+text(tree.boston)
+```
+
+
+Call predict on the model passing in the test data, assigning it to the variable "tree.pred". then calculate MSE by mean of the square of the difference between the predictions, tree.pred, and true values, true.vals. 
+  mean ( (pred-true) ^ 2 )
+  
+```{r, echo = FALSE}
+tree.pred<- predict(tree.boston, newdata=test.data)
+mean((tree.pred-true.vals)^2)
+```
+
+Now look for a tree size for pruning. This code creates a plot of candidate tree sizes vs. error (deviation). 
+
+```{r, echo=FALSE}
+cv.boston<-cv.tree(tree.boston)
+plot(cv.boston$size, cv.boston$dev, type="b")
+```
+
+Prune the tree using the "prune.tree" function. Use the est.size variable you created above as the value for the "best" parameter. Then, in two statements, call plot and text on the object returned from the prune.tree method to procude a plot of the pruned tree.
+
+```{r, echo = FALSE}
+best.size <- 5
+pruned.tree<-prune.tree(tree.boston, best=best.size)
+plot(pruned.tree)
+text(pruned.tree)
+```
+
+
+Now make predictions and calculate MSE for the pruned tree as you did for the unpruned tree..
+
+```{r, echo = FALSE}
+tree.pred2<- predict(pruned.tree, newdata=test.data)
+mean((tree.pred2-true.vals)^2)
+```
+
+
+##Summary and Conclusions
+
+
+## References
+
+https://www.kaggle.com/datasets/fedesoriano/the-boston-houseprice-data 
+(Source [of dataset]: StatLib - Carnegie Mellon University)
+
